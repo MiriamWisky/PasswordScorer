@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>התחברות - מחשבון חוזק סיסמה</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+        .login-container { 
+            max-width: 400px; 
+            width: 100%;
+            padding: 40px; 
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+            text-align: center;
+        }
+        h2 {
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 28px;
+        }
+        input[type="text"], input[type="password"] { 
+            padding: 15px; 
+            width: 100%; 
+            margin-bottom: 20px; 
+            font-size: 16px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            transition: border-color 0.3s;
+        }
+        input:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        button { 
+            padding: 15px 30px; 
+            font-size: 16px; 
+            cursor: pointer; 
+            border: none; 
+            border-radius: 8px;
+            transition: all 0.3s;
+            font-weight: 600;
+            width: 100%;
+            margin-bottom: 10px;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-secondary { background: #6c757d; color: white; }
+        .error { color: #dc3545; margin: 10px 0; }
+        .success { color: #28a745; margin: 10px 0; }
+        .toggle-link { color: #007bff; cursor: pointer; text-decoration: underline; }
+    </style>
+</head>
+<body>
+    <div class="login-container">
+        <h2 id="formTitle">התחברות למערכת</h2>
+        
+        <form id="authForm">
+            <input type="text" id="username" placeholder="שם משתמש" required>
+            <input type="password" id="password" placeholder="סיסמה" required>
+            
+            <button type="submit" class="btn-primary" id="submitBtn">התחבר</button>
+            <button type="button" class="btn-secondary" id="toggleBtn">אין לך חשבון? הירשם</button>
+        </form>
+        
+        <div id="message"></div>
+    </div>
+
+    <script>
+        let isLoginMode = true;
+        
+        document.getElementById('toggleBtn').addEventListener('click', function() {
+            isLoginMode = !isLoginMode;
+            
+            if (isLoginMode) {
+                document.getElementById('formTitle').textContent = 'התחברות למערכת';
+                document.getElementById('submitBtn').textContent = 'התחבר';
+                document.getElementById('toggleBtn').textContent = 'אין לך חשבון? הירשם';
+            } else {
+                document.getElementById('formTitle').textContent = 'הרשמה למערכת';
+                document.getElementById('submitBtn').textContent = 'הירשם';
+                document.getElementById('toggleBtn').textContent = 'יש לך חשבון? התחבר';
+            }
+            
+            document.getElementById('message').innerHTML = '';
+        });
+        
+        document.getElementById('authForm').addEventListener('submit', async function(e) {
+            e.preventDefault();
+            
+            const username = document.getElementById('username').value;
+            const password = document.getElementById('password').value;
+            const messageDiv = document.getElementById('message');
+            
+            if (!username || !password) {
+                messageDiv.innerHTML = '<div class="error">נדרש שם משתמש וסיסמה</div>';
+                return;
+            }
+            
+            const endpoint = isLoginMode ? '/api/v1/login' : '/api/v1/register';
+            
+            try {
+                const response = await fetch(endpoint, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ username, password })
+                });
+                
+                const data = await response.json();
+                
+                if (data.success) {
+                    messageDiv.innerHTML = `<div class="success">${data.message}</div>`;
+                    setTimeout(() => {
+                        window.location.href = '/';
+                    }, 1000);
+                } else {
+                    messageDiv.innerHTML = `<div class="error">${data.error}</div>`;
+                }
+            } catch (error) {
+                messageDiv.innerHTML = '<div class="error">שגיאת רשת</div>';
+            }
+        });
+    </script>
+</body>
+</html>

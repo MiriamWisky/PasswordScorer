@@ -1,0 +1,11 @@
+flask
+gunicorn
+psycopg2-binary
+scikit-learn
+pandas
+numpy
+python-dotenv
+prometheus_client
+flask-session
+pytest
+pytest-flask

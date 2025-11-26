@@ -1,0 +1,316 @@
+<!DOCTYPE html>
+<html lang="he" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>מחשבון חוזק סיסמה</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { 
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif; 
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0;
+            padding: 20px;
+            min-height: 100vh;
+        }
+        .container { 
+            max-width: 700px; 
+            margin: 0 auto; 
+            padding: 30px; 
+            background: white;
+            border-radius: 15px;
+            box-shadow: 0 10px 30px rgba(0,0,0,0.2);
+        }
+        h2 {
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 28px;
+        }
+        input[type="text"] { 
+            padding: 15px; 
+            width: 100%; 
+            margin-bottom: 20px; 
+            font-size: 16px;
+            border: 2px solid #ddd;
+            border-radius: 8px;
+            transition: border-color 0.3s;
+        }
+        input[type="text"]:focus {
+            outline: none;
+            border-color: #667eea;
+        }
+        .button-group {
+            display: flex;
+            gap: 10px;
+            flex-wrap: wrap;
+            justify-content: center;
+            margin-bottom: 20px;
+        }
+        button { 
+            padding: 12px 20px; 
+            font-size: 14px; 
+            cursor: pointer; 
+            border: none; 
+            border-radius: 8px;
+            transition: all 0.3s;
+            font-weight: 600;
+        }
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0,0,0,0.2);
+        }
+        .btn-primary { background: #007bff; color: white; }
+        .btn-success { background: #28a745; color: white; }
+        .btn-warning { background: #ffc107; color: black; }
+        .btn-info { background: #17a2b8; color: white; }
+        
+        #results { 
+            margin-top: 30px; 
+            padding: 20px; 
+            border-radius: 10px;
+            background: linear-gradient(135deg, #f8f9fa 0%, #e9ecef 100%);
+            text-align: right; 
+        }
+        .weak { color: #dc3545; font-weight: bold; }
+        .medium { color: #fd7e14; font-weight: bold; }
+        .strong { color: #28a745; font-weight: bold; }
+        
+        #historyResults {
+            margin-top: 20px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 10px;
+        }
+        #historyList {
+            list-style: none;
+            padding: 0;
+        }
+        #historyList li {
+            padding: 10px;
+            margin: 5px 0;
+            background: white;
+            border-radius: 5px;
+            border-left: 4px solid #007bff;
+            font-size: 14px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+
+        
+       
+        <h2>מחשבון חוזק סיסמה וחיזוי פיצוח 🔑</h2>
+        <input type="text" id="passwordInput" placeholder="הכנס סיסמה כאן..." onkeyup="if(this.value.length > 0) checkPassword(false)"> 
+
+        <div class="button-group">
+            <button class="btn-primary" onclick="checkPassword(true)">בדיקה ושמירה</button>
+            <button class="btn-warning" onclick="generatePassword()">גנרציה סיסמה חזקה</button>
+            <button class="btn-success" onclick="showHistory()">הצג היסטוריה</button>
+            <button class="btn-info" onclick="logout()">התנתקות</button>
+        </div>
+
+        <div id="results">
+            <strong>תוצאות בדיקה:</strong>
+            <p id="scoreLevel">רמת חוזק: <span class="weak">...</span></p>
+            <p id="crackingTime">זמן פיצוח חזוי: <span>...</span></p>
+            <p id="statusMessage">התוצאות נשמרו בבסיס הנתונים (PostgreSQL).</p>
+        </div>
+
+        <div id="historyResults" style="display: none;">
+            <h4>היסטוריית 10 הסיסמאות האחרונות:</h4>
+            <ul id="historyList"></ul>
+        </div>
+        
+    </div>
+
+    <script>
+        // בדיקת התחברות בטעינת העמוד
+        window.addEventListener('load', function() {
+            checkAuthStatus();
+        });
+        
+        async function checkAuthStatus() {
+            try {
+                const response = await fetch('/api/v1/history', {
+                    method: 'GET'
+                });
+                
+                if (response.status === 401) {
+                    window.location.href = '/login.html';
+                }
+            } catch (error) {
+                console.log('Auth check failed');
+            }
+        }
+        
+        async function logout() {
+            try {
+                await fetch('/api/v1/logout', { method: 'POST' });
+                window.location.href = '/login.html';
+            } catch (error) {
+                console.error('Logout failed:', error);
+            }
+        }
+        
+        // פונקציה אחת מטפלת בשני המצבים: בדיקה מיידית (false) או שמירה (true)
+    async function checkPassword(saveToDb) {
+        const password = document.getElementById('passwordInput').value;
+        const scoreLevelElement = document.getElementById('scoreLevel');
+        const crackingTimeElement = document.getElementById('crackingTime');
+        const statusMessageElement = document.getElementById('statusMessage');
+
+        if (password.length === 0) {
+            scoreLevelElement.innerHTML = 'רמת חוזק: <span class="weak">...</span>';
+            crackingTimeElement.innerHTML = 'זמן פיצוח חזוי: <span>...</span>';
+            statusMessageElement.textContent = '';
+            return;
+        }
+        
+        // בונה את גוף הבקשה, כולל הדגל save_to_db
+        const payload = { 
+            password: password, 
+            save_to_db: saveToDb // True או False
+        };
+        
+        try {
+            // שולח בקשה לנתיב הראשי
+            const response = await fetch('/api/v1/score', { 
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload) 
+            });
+
+            const data = await response.json();
+            
+            if (data.error) {
+                scoreLevelElement.innerHTML = 'רמת חוזק: <span class="weak">שגיאה</span>';
+                crackingTimeElement.innerHTML = 'זמן פיצוח חזוי: <span>לא זמין</span>';
+                statusMessageElement.textContent = `שגיאה: ${data.error}`;
+                return;
+            }
+            
+            // עדכון ה-UI עם החוזק וזמן הפיצוח
+            let strengthClass = 'weak';
+            let strengthText = 'לא ידוע';
+            
+            if (data.strength === 0) {
+                strengthClass = 'weak';
+                strengthText = 'חלשה';
+            } else if (data.strength === 1) {
+                strengthClass = 'medium';
+                strengthText = 'בינונית';
+            } else if (data.strength === 2) {
+                strengthClass = 'strong';
+                strengthText = 'חזקה';
+            }
+            
+            scoreLevelElement.innerHTML = `רמת חוזק: <span class="${strengthClass}">${strengthText}</span>`;
+            crackingTimeElement.innerHTML = `זמן פיצוח חזוי: <span>${data.crack_time}</span>`;
+            
+            if (saveToDb) {
+                statusMessageElement.textContent = `הסיסמה נשמרה בבסיס הנתונים (חוזק: ${strengthText}).`;
+            } else {
+                statusMessageElement.textContent = 'בדיקה בלבד - לא נשמר בבסיס הנתונים.';
+            }
+            
+            // ניקוי הטקסט בוקס אחרי שמירה
+            if (data.clear_input) {
+                document.getElementById('passwordInput').value = '';
+            }
+            
+        } catch (error) {
+            scoreLevelElement.innerHTML = 'רמת חוזק: <span class="weak">שגיאה</span>';
+            crackingTimeElement.innerHTML = 'זמן פיצוח חזוי: <span>לא זמין</span>';
+            statusMessageElement.textContent = 'שגיאה: לא ניתן לבדוק חוזק סיסמה.';
+            console.error('Check Error:', error);
+        }
+    }
+
+        // פונקציה לגנרציה של סיסמה מומלצת
+    async function generatePassword() {
+        const passwordInput = document.getElementById('passwordInput');
+        const scoreLevelElement = document.getElementById('scoreLevel');
+        const crackingTimeElement = document.getElementById('crackingTime');
+        const statusMessageElement = document.getElementById('statusMessage');
+        
+        statusMessageElement.textContent = 'מגנר סיסמה מומלצת...';
+        
+        try {
+            const response = await fetch('/api/v1/recommend', { method: 'GET' });
+            const data = await response.json();
+            
+            if (data.error) {
+                statusMessageElement.textContent = `שגיאה: ${data.error}`;
+                return;
+            }
+            
+            // הכנסת הסיסמה לשדה הטקסט
+            passwordInput.value = data.password;
+            
+            // עדכון התוצאות
+            let strengthClass = 'weak';
+            let strengthText = 'לא ידוע';
+            
+            if (data.strength === 0) {
+                strengthClass = 'weak';
+                strengthText = 'חלשה';
+            } else if (data.strength === 1) {
+                strengthClass = 'medium';
+                strengthText = 'בינונית';
+            } else if (data.strength === 2) {
+                strengthClass = 'strong';
+                strengthText = 'חזקה';
+            }
+            
+            scoreLevelElement.innerHTML = `רמת חוזק: <span class="${strengthClass}">${strengthText}</span>`;
+            crackingTimeElement.innerHTML = `זמן פיצוח חזוי: <span>${data.crack_time}</span>`;
+            // בדיקה אם הסיסמה מבוססת על דפוסים קיימים
+            const isBasedOnHistory = data.password.includes('miriam') || data.password.includes('miri');
+            if (isBasedOnHistory) {
+                statusMessageElement.textContent = 'סיסמה חזקה נוצרה בהצלחה! (מבוסס על הסיסמאות שלך)';
+            } else {
+                statusMessageElement.textContent = 'סיסמה חזקה נוצרה בהצלחה!';
+            }
+            
+        } catch (error) {
+            statusMessageElement.textContent = 'שגיאה: לא ניתן לגנרר סיסמה מומלצת.';
+            console.error('Generate Password Error:', error);
+        }
+    }
+
+        // פונקציה חדשה להצגת ההיסטוריה
+    async function showHistory() {
+        const historyList = document.getElementById('historyList');
+        const historyResultsDiv = document.getElementById('historyResults');
+        historyList.innerHTML = 'טוען...';
+        historyResultsDiv.style.display = 'block';
+
+        try {
+            // שולח בקשת GET ל-Endpoint החדש
+            const response = await fetch('/api/v1/history', { method: 'GET' });
+            const data = await response.json();
+
+            historyList.innerHTML = ''; // מנקה את רשימת הטעינה
+
+            if (response.ok && Array.isArray(data)) {
+                if (data.length === 0) {
+                    historyList.innerHTML = '<li>לא נמצאו בדיקות קודמות.</li>';
+                } else {
+                    data.forEach(item => {
+                        const li = document.createElement('li');
+                        // שינינו מ-Hash ל-Password
+                        li.textContent = `חוזק: ${item.strength_level} | סיסמה: ${item.password} | זמן: ${new Date(item.timestamp).toLocaleString()}`;
+                        historyList.appendChild(li);
+                    });
+                }
+            } else {
+                historyList.innerHTML = `<li>שגיאה בשליפת נתונים: ${data.error || 'לא ידוע'}</li>`;
+            }
+        } catch (error) {
+            historyList.innerHTML = `<li>שגיאת רשת: לא ניתן להתחבר לשרת.</li>`;
+            console.error('History Fetch Error:', error);
+        }
+    }
+    </script>
+</body>
+</html>
