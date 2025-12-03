@@ -26,11 +26,20 @@ DB_OPERATIONS = Counter('database_operations_total', 'Database operations', ['op
 def extract_features(password):
     length = len(password)
     has_upper = 1 if any(c.isupper() for c in password) else 0
+    has_lower = 1 if any(c.islower() for c in password) else 0
+    has_digit = 1 if any(c.isdigit() for c in password) else 0
     has_special = 1 if any(not c.isalnum() for c in password) else 0
+    
+    # Character variety score (0-4)
+    char_variety = has_upper + has_lower + has_digit + has_special
+    
+    # Penalize passwords that are only digits
+    if password.isdigit():
+        complexity_score = length * 0.5  # Heavy penalty for digit-only
+    else:
+        complexity_score = length + (char_variety * 3) + (has_special * 5)
 
-    complexity_score = length + (has_upper * 5) + (has_special * 10)
-
-    return np.array([length, has_upper, complexity_score]).reshape(1, -1)
+    return np.array([length, char_variety, complexity_score]).reshape(1, -1)
 
 # Load the pre-trained model once when the app starts
 MODEL = None
@@ -65,12 +74,17 @@ def get_prediction_and_crack_time(password):
 # --- 2. Database Connection Logic ---
 def get_db_connection():
     try:
-        conn = psycopg2.connect(
-            host="db",
-            database=os.environ.get("POSTGRES_DB", "password_db"),
-            user=os.environ.get("POSTGRES_USER", "devops_user"),
-            password=os.environ.get("POSTGRES_PASSWORD", "supersecretpassword")
-        )
+        # Railway provides DATABASE_URL
+        database_url = os.environ.get('DATABASE_URL')
+        if database_url:
+            conn = psycopg2.connect(database_url)
+        else:
+            conn = psycopg2.connect(
+                host=os.environ.get("PGHOST", "db"),
+                database=os.environ.get("POSTGRES_DB", "password_db"),
+                user=os.environ.get("POSTGRES_USER", "devops_user"),
+                password=os.environ.get("POSTGRES_PASSWORD", "supersecretpassword")
+            )
         return conn
     except Exception as e:
         print(f"DB CONNECTION ERROR: {e}")
@@ -197,47 +211,43 @@ def build_markov_model(password_list, order=1):  # הקטנת ה-order ל-1 לד
 def create_smart_variation(password_list):
     """Create smart variations based on existing passwords."""
     if not password_list:
-        return generate_strong_password(8)
+        return generate_strong_password(12)
     
-    # בחירת סיסמה בסיסית אקראית
-    base_password = random.choice(password_list).lower()
-    
-    # אסטרטגיות שונות לוריאציה
-    strategies = [
-        # הוספת מספרים
-        lambda p: p + str(random.randint(1, 999)),
-        lambda p: p + str(random.randint(10, 99)),
-        lambda p: str(random.randint(1, 99)) + p,
+    max_attempts = 10
+    for attempt in range(max_attempts):
+        # בחירת סיסמה בסיסית אקראית
+        base_password = random.choice(password_list).lower()
         
-        # כפילות חלקיות
-        lambda p: p + p[:3] if len(p) >= 3 else p + p,
-        lambda p: p[:4] + p[:4] if len(p) >= 4 else p + p,
+        # אסטרטגיות שונות לוריאציה
+        strategies = [
+            # הוספת מספרים ותווים מיוחדים
+            lambda p: p.capitalize() + str(random.randint(10, 999)) + random.choice(['!', '@', '#', '$']),
+            lambda p: p.upper()[:4] + p.lower()[4:] + str(random.randint(100, 999)) + '!',
+            lambda p: random.choice(['My', 'The', 'New']) + p.capitalize() + str(random.randint(10, 99)) + '@',
+            
+            # שילוב מורכב
+            lambda p: p[:3].capitalize() + str(random.randint(10, 99)) + p[3:].lower() + random.choice(['!@', '#$', '%&']),
+            lambda p: p.capitalize() + random.choice(['123!', '456@', '789#', '2024$']),
+        ]
         
-        # שינוי קל באותיות
-        lambda p: p.replace('i', 'y') if 'i' in p else p,
-        lambda p: p.replace('a', 'e') if 'a' in p else p,
+        # בחירת אסטרטגיה אקראית ויישום
+        strategy = random.choice(strategies)
+        result = strategy(base_password)
         
-        # הוספת תווים מיוחדים
-        lambda p: p + random.choice(['!', '@', '#', '$', '%']),
-        lambda p: p + random.choice(['123', '456', '789']),
+        # וידוא שהתוצאה באורך מתאים
+        if len(result) < 8:
+            result += str(random.randint(10, 99)) + '!'
         
-        # שילוב של שתי סיסמאות
-        lambda p: (p[:len(p)//2] + random.choice(password_list).lower()[:4]) if len(password_list) > 1 else p + '123'
-    ]
+        # בדיקה שהסיסמה חזקה
+        try:
+            strength, _ = get_prediction_and_crack_time(result)
+            if strength >= 2:  # רק סיסמאות חזקות
+                return result
+        except:
+            continue
     
-    # בחירת אסטרטגיה אקראית ויישום
-    strategy = random.choice(strategies)
-    result = strategy(base_password)
-    
-    # וידוא שהתוצאה לא קצרה מדי
-    if len(result) < 6:
-        result += str(random.randint(10, 99))
-    
-    # הגבלת אורך מקסימלי
-    if len(result) > 20:
-        result = result[:20]
-    
-    return result
+    # אם לא הצלחנו ליצור סיסמה חזקה, נחזיר סיסמה חזקה גנרית
+    return generate_strong_password(12)
 
 
 def generate_password_from_markov(model, min_length=8, max_length=15, order=2):
@@ -483,4 +493,5 @@ def recommend_password():
 
 
 if __name__ == '__main__':
-    app.run(host='0.0.0.0', port=8000)
+    port = int(os.environ.get('PORT', 8000))
+    app.run(host='0.0.0.0', port=port)
