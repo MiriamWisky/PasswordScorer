@@ -3,15 +3,15 @@ from app import extract_features, get_prediction_and_crack_time, create_smart_va
 
 def test_extract_features():
     """Test password feature extraction"""
-    # Test weak password
+    # Test weak password (digits only)
     features = extract_features("123")
     assert features[0][0] == 3  # length
-    assert features[0][1] == 0  # no uppercase
+    assert features[0][1] == 1  # char_variety (only digits)
     
     # Test strong password
     features = extract_features("MyStr0ng!Pass")
     assert features[0][0] == 13  # length
-    assert features[0][1] == 1   # has uppercase
+    assert features[0][1] == 4   # char_variety (upper+lower+digit+special)
 
 def test_password_strength_prediction():
     """Test password strength prediction"""
