@@ -9,3 +9,8 @@ prometheus_client
 flask-session
 pytest
 pytest-flask
+PyJWT
+bcrypt
+flask-limiter
+google-generativeai
+requests

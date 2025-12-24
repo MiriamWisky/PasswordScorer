@@ -45,6 +45,24 @@ docker-compose up -d
 # Prometheus: http://localhost:9090
 ```
 
+## 🔐 GitHub Secrets Setup
+
+הוסף את ה-Secrets הבאים ב-GitHub repository:
+
+### Required Secrets:
+- `POSTGRES_USER` - שם משתמש למסד הנתונים
+- `POSTGRES_PASSWORD` - סיסמה למסד הנתונים  
+- `POSTGRES_DB` - שם מסד הנתונים
+- `SECRET_KEY` - מפתח סודי לאפליקציה
+- `GEMINI_API_KEY` - מפתח API של Google Gemini (חובה ליצירת שירים)
+- `DOCKER_HUB_USERNAME` - שם משתמש Docker Hub (אופציונלי)
+- `DOCKER_HUB_TOKEN` - טוקן Docker Hub (אופציונלי)
+
+### איך להוסיף:
+1. Settings → Secrets and variables → Actions
+2. New repository secret
+3. עבור ל-[Google AI Studio](https://makersuite.google.com/app/apikey) ליצירת GEMINI_API_KEY
+
 ## 🧪 הרצת בדיקות
 
 ```bash

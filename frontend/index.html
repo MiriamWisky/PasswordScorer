@@ -106,6 +106,7 @@
             <button class="btn-primary" onclick="checkPassword(true)">בדיקה ושמירה</button>
             <button class="btn-warning" onclick="generatePassword()">גנרציה סיסמה חזקה</button>
             <button class="btn-success" onclick="showHistory()">הצג היסטוריה</button>
+            <button class="btn-info" onclick="generatePoem()" style="background: #e91e63;">🎵 צור שיר לסיסמה</button>
             <button class="btn-info" onclick="logout()">התנתקות</button>
         </div>
 
@@ -121,6 +122,11 @@
             <ul id="historyList"></ul>
         </div>
         
+        <div id="poemResults" style="display: none; background: linear-gradient(135deg, #ff9a9e 0%, #fecfef 100%); padding: 20px; border-radius: 10px; margin-top: 20px;">
+            <div id="poemContent" style="white-space: pre-line; font-family: 'Courier New', monospace; font-size: 16px; color: #444; line-height: 1.6;"></div>
+            <p style="font-size: 12px; color: #666; margin-top: 15px;">⚠️ השיר נוצר מרמזים בלבד - הסיסמה האמיתית לא נשלחה ל-AI</p>
+        </div>
+        
     </div>
 
     <script>
@@ -130,12 +136,22 @@
         });
         
         async function checkAuthStatus() {
+            const token = localStorage.getItem('token');
+            if (!token) {
+                window.location.href = '/login.html';
+                return;
+            }
+            
             try {
-                const response = await fetch('/api/v1/history', {
-                    method: 'GET'
+                const response = await fetch('/history', {
+                    method: 'GET',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
                 });
                 
                 if (response.status === 401) {
+                    localStorage.removeItem('token');
                     window.location.href = '/login.html';
                 }
             } catch (error) {
@@ -144,11 +160,19 @@
         }
         
         async function logout() {
+            const token = localStorage.getItem('token');
             try {
-                await fetch('/api/v1/logout', { method: 'POST' });
+                await fetch('/logout', { 
+                    method: 'POST',
+                    headers: {
+                        'Authorization': `Bearer ${token}`
+                    }
+                });
+                localStorage.removeItem('token');
                 window.location.href = '/login.html';
             } catch (error) {
-                console.error('Logout failed:', error);
+                localStorage.removeItem('token');
+                window.location.href = '/login.html';
             }
         }
         
@@ -173,12 +197,39 @@
         };
         
         try {
+            const token = localStorage.getItem('token');
+            if (!token) {
+                window.location.href = '/login.html';
+                return;
+            }
+            
             // שולח בקשה לנתיב הראשי
-            const response = await fetch('/api/v1/score', { 
+            const response = await fetch('/score', { 
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
+                headers: { 
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
                 body: JSON.stringify(payload) 
             });
+
+            // Handle different response statuses
+            if (response.status === 401) {
+                localStorage.removeItem('token');
+                window.location.href = '/login.html';
+                return;
+            }
+            
+            if (response.status === 503) {
+                scoreLevelElement.innerHTML = 'רמת חוזק: <span class="weak">שגיאה זמנית</span>';
+                crackingTimeElement.innerHTML = 'זמן פיצוח חזוי: <span>נסה שוב</span>';
+                statusMessageElement.textContent = 'השרת עמוס, נסה שוב בעוד רגע';
+                return;
+            }
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
 
             const data = await response.json();
             
@@ -236,7 +287,12 @@
         statusMessageElement.textContent = 'מגנר סיסמה מומלצת...';
         
         try {
-            const response = await fetch('/api/v1/recommend', { method: 'GET' });
+            const response = await fetch('/recommend', { 
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${localStorage.getItem('token')}`
+                }
+            });
             const data = await response.json();
             
             if (data.error) {
@@ -286,8 +342,34 @@
         historyResultsDiv.style.display = 'block';
 
         try {
-            // שולח בקשת GET ל-Endpoint החדש
-            const response = await fetch('/api/v1/history', { method: 'GET' });
+            const token = localStorage.getItem('token');
+            if (!token) {
+                window.location.href = '/login.html';
+                return;
+            }
+            
+            const response = await fetch('/history', { 
+                method: 'GET',
+                headers: {
+                    'Authorization': `Bearer ${token}`
+                }
+            });
+            
+            if (response.status === 401) {
+                localStorage.removeItem('token');
+                window.location.href = '/login.html';
+                return;
+            }
+            
+            if (response.status === 503) {
+                historyList.innerHTML = '<li>השרת עמוס, נסה שוב בעוד רגע</li>';
+                return;
+            }
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            
             const data = await response.json();
 
             historyList.innerHTML = ''; // מנקה את רשימת הטעינה
@@ -309,6 +391,66 @@
         } catch (error) {
             historyList.innerHTML = `<li>שגיאת רשת: לא ניתן להתחבר לשרת.</li>`;
             console.error('History Fetch Error:', error);
+        }
+    }
+    
+    // פונקציה חדשה ליצירת שיר AI
+    async function generatePoem() {
+        const password = document.getElementById('passwordInput').value;
+        const poemResultsDiv = document.getElementById('poemResults');
+        const poemContent = document.getElementById('poemContent');
+        
+        if (!password || password.length < 4) {
+            alert('הכנס סיסמה (לפחות 4 תווים) ליצירת שיר!');
+            return;
+        }
+        
+        poemResultsDiv.style.display = 'block';
+        poemContent.textContent = 'יוצר שיר מאובטח עבורך... 🎵✨';
+        
+        try {
+            const token = localStorage.getItem('token');
+            if (!token) {
+                window.location.href = '/login.html';
+                return;
+            }
+            
+            const response = await fetch('/password-poem', {
+                method: 'POST',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Authorization': `Bearer ${token}`
+                },
+                body: JSON.stringify({ password: password })
+            });
+            
+            if (response.status === 401) {
+                localStorage.removeItem('token');
+                window.location.href = '/login.html';
+                return;
+            }
+            
+            if (response.status === 503) {
+                poemContent.textContent = 'השרת עמוס, נסה שוב בעוד רגע...';
+                return;
+            }
+            
+            if (!response.ok) {
+                throw new Error(`HTTP ${response.status}`);
+            }
+            
+            const data = await response.json();
+            
+            if (data.error) {
+                poemContent.textContent = `שגיאה: ${data.error}`;
+                return;
+            }
+            
+            poemContent.textContent = data.poem;
+            
+        } catch (error) {
+            poemContent.textContent = 'שגיאה ביצירת השיר. נסה שוב מאוחר יותר.';
+            console.error('Poem Generation Error:', error);
         }
     }
     </script>

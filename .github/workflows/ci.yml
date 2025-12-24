@@ -37,7 +37,7 @@ jobs:
       run: |
         cd backend
         pip install -r requirements.txt
-        pip install pytest pytest-flask
+        pip install pytest pytest-flask requests
     
     - name: Run tests
       env:
@@ -45,6 +45,7 @@ jobs:
         POSTGRES_PASSWORD: ${{ secrets.POSTGRES_PASSWORD || 'supersecretpassword' }}
         POSTGRES_DB: ${{ secrets.POSTGRES_DB || 'password_db' }}
         SECRET_KEY: ${{ secrets.SECRET_KEY || 'test-secret-key' }}
+        GEMINI_API_KEY: ${{ secrets.GEMINI_API_KEY }}
         DATABASE_URL: postgresql://${{ secrets.POSTGRES_USER || 'devops_user' }}:${{ secrets.POSTGRES_PASSWORD || 'supersecretpassword' }}@localhost:5432/${{ secrets.POSTGRES_DB || 'password_db' }}
       run: |
         cd backend

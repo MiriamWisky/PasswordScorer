@@ -110,7 +110,7 @@
                 return;
             }
             
-            const endpoint = isLoginMode ? '/api/v1/login' : '/api/v1/register';
+            const endpoint = isLoginMode ? '/login' : '/register';
             
             try {
                 const response = await fetch(endpoint, {
@@ -123,6 +123,12 @@
                 
                 if (data.success) {
                     messageDiv.innerHTML = `<div class="success">${data.message}</div>`;
+                    
+                    // Store JWT token
+                    if (data.token) {
+                        localStorage.setItem('token', data.token);
+                    }
+                    
                     setTimeout(() => {
                         window.location.href = '/';
                     }, 1000);

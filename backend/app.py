@@ -1,6 +1,6 @@
 import os
 import pickle
-from flask import Flask, request, jsonify, session
+from flask import Flask, request, jsonify
 import numpy as np
 import psycopg2
 from dotenv import load_dotenv
@@ -11,11 +11,34 @@ import string
 from prometheus_client import Counter, Histogram, generate_latest, CONTENT_TYPE_LATEST
 import time
 import uuid
+import jwt
+import bcrypt
+from functools import wraps
+from flask_limiter import Limiter
+from flask_limiter.util import get_remote_address
+from datetime import datetime, timedelta
+import google.generativeai as genai
 
 # --- 1. Initialization and Model Loading ---
 load_dotenv()
 app = Flask(__name__)
 app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
+
+# Rate limiting
+limiter = Limiter(
+    key_func=get_remote_address,
+    app=app,
+    default_limits=["200 per day", "50 per hour"]
+)
+
+# JWT Configuration
+JWT_SECRET = os.environ.get('JWT_SECRET', 'jwt-secret-key-change-in-production')
+JWT_EXPIRATION_HOURS = 24
+
+# Gemini AI Configuration
+GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
 
 # Prometheus metrics
 REQUEST_COUNT = Counter('password_requests_total', 'Total password requests', ['endpoint', 'method'])
@@ -93,76 +116,83 @@ def get_db_connection():
 def create_table_if_not_exists():
     conn = get_db_connection()
     if conn:
-        with conn.cursor() as cur:
-            # יצירת טבלת משתמשים
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS users (
-                    id SERIAL PRIMARY KEY,
-                    username VARCHAR(255) UNIQUE NOT NULL,
-                    password_hash VARCHAR(255) NOT NULL,
-                    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-            
-            # יצירת טבלת סיסמאות (אם לא קיימת)
-            cur.execute("""
-                CREATE TABLE IF NOT EXISTS password_scores (
-                    id SERIAL PRIMARY KEY,
-                    password_hash VARCHAR(255) NOT NULL,
-                    plain_password VARCHAR(255) NOT NULL,
-                    score INTEGER NOT NULL,
-                    prediction_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-                );
-            """)
-            
-            # הוספת עמודת user_id אם לא קיימת
-            try:
+        try:
+            with conn.cursor() as cur:
+                # יצירת טבלת משתמשים
                 cur.execute("""
-                    ALTER TABLE password_scores 
-                    ADD COLUMN user_id INTEGER REFERENCES users(id);
+                    CREATE TABLE IF NOT EXISTS users (
+                        id SERIAL PRIMARY KEY,
+                        username VARCHAR(255) UNIQUE NOT NULL,
+                        password_hash VARCHAR(255) NOT NULL,
+                        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+                    );
                 """)
-                print("Added user_id column to password_scores table")
-            except Exception as e:
-                if "already exists" in str(e) or "duplicate column" in str(e):
-                    print("user_id column already exists")
-                else:
-                    print(f"Error adding user_id column: {e}")
-            
-            # יצירת משתמש ברירת מחדל לרשומות ישנות
-            try:
-                cur.execute("SELECT id FROM users WHERE username = 'default_user'")
-                if not cur.fetchone():
-                    cur.execute("""
-                        INSERT INTO users (username, password_hash) 
-                        VALUES ('default_user', 'default_hash')
-                    """)
-                    print("Created default user")
-                    
-                # עדכון רשומות ישנות למשתמש ברירת מחדל
-                cur.execute("SELECT id FROM users WHERE username = 'default_user'")
-                default_user_id = cur.fetchone()[0]
                 
+                # יצירת טבלת סיסמאות (אם לא קיימת)
                 cur.execute("""
-                    UPDATE password_scores 
-                    SET user_id = %s 
-                    WHERE user_id IS NULL
-                """, (default_user_id,))
-                print("Updated old records with default user")
-            except Exception as e:
-                print(f"Error handling default user: {e}")
-                    
-        conn.commit()
-        conn.close()
+                    CREATE TABLE IF NOT EXISTS password_scores (
+                        id SERIAL PRIMARY KEY,
+                        password_hash VARCHAR(255) NOT NULL,
+                        plain_password VARCHAR(255) NOT NULL,
+                        score INTEGER NOT NULL,
+                        prediction_time TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                        user_id INTEGER REFERENCES users(id)
+                    );
+                """)
+                
+                # יצירת משתמש ברירת מחדל
+                cur.execute("""
+                    INSERT INTO users (username, password_hash) 
+                    VALUES ('default_user', 'default_hash')
+                    ON CONFLICT (username) DO NOTHING
+                """)
+                
+            conn.commit()
+        except Exception as e:
+            print(f"Database setup error: {e}")
+            conn.rollback()
+        finally:
+            conn.close()
 
 create_table_if_not_exists()
 
-def get_user_id():
-    """Get user ID from session"""
-    return session.get('user_id')
+# JWT Authentication decorator
+def token_required(f):
+    @wraps(f)
+    def decorated(*args, **kwargs):
+        token = request.headers.get('Authorization')
+        if not token:
+            return jsonify({'error': 'נדרש טוקן אימות'}), 401
+        
+        try:
+            if token.startswith('Bearer '):
+                token = token[7:]
+            data = jwt.decode(token, JWT_SECRET, algorithms=['HS256'])
+            current_user_id = data['user_id']
+        except jwt.ExpiredSignatureError:
+            return jsonify({'error': 'הטוקן פג תוקף'}), 401
+        except jwt.InvalidTokenError:
+            return jsonify({'error': 'טוקן לא תקין'}), 401
+        
+        return f(current_user_id, *args, **kwargs)
+    return decorated
 
-def is_logged_in():
-    """Check if user is logged in"""
-    return 'user_id' in session
+def hash_password(password):
+    """Hash password using bcrypt"""
+    return bcrypt.hashpw(password.encode('utf-8'), bcrypt.gensalt()).decode('utf-8')
+
+def verify_password(password, hashed):
+    """Verify password against hash"""
+    return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
+
+def generate_token(user_id):
+    """Generate JWT token"""
+    payload = {
+        'user_id': user_id,
+        'exp': datetime.utcnow() + timedelta(hours=JWT_EXPIRATION_HOURS),
+        'iat': datetime.utcnow()
+    }
+    return jwt.encode(payload, JWT_SECRET, algorithm='HS256')
 
 def generate_strong_password(length=12):
     """Generates a cryptographically strong, random password."""
@@ -296,6 +326,7 @@ def generate_password_from_markov(model, min_length=8, max_length=15, order=2):
 # ... (שאר הקוד וה-Imports)
 
 @app.route('/login', methods=['POST'])
+@limiter.limit("5 per minute")
 def login():
     data = request.get_json()
     username = data.get('username', '')
@@ -313,15 +344,20 @@ def login():
             cur.execute("SELECT id, password_hash FROM users WHERE username = %s", (username,))
             user = cur.fetchone()
             
-            if user and hashlib.sha256(password.encode()).hexdigest() == user[1]:
-                session['user_id'] = user[0]
-                return jsonify({"success": True, "message": "התחברת בהצלחה"})
+            if user and verify_password(password, user[1]):
+                token = generate_token(user[0])
+                return jsonify({
+                    "success": True, 
+                    "message": "התחברת בהצלחה",
+                    "token": token
+                })
             else:
                 return jsonify({"error": "שם משתמש או סיסמה שגויים"}), 401
     finally:
         conn.close()
 
 @app.route('/register', methods=['POST'])
+@limiter.limit("3 per minute")
 def register():
     data = request.get_json()
     username = data.get('username', '')
@@ -330,19 +366,28 @@ def register():
     if not username or not password:
         return jsonify({"error": "נדרש שם משתמש וסיסמה"}), 400
     
+    # Password strength validation
+    if len(password) < 8:
+        return jsonify({"error": "הסיסמה חייבת להיות באורך 8 תווים לפחות"}), 400
+    
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "שגיאת חיבור למסד נתונים"}), 500
     
     try:
         with conn.cursor() as cur:
-            password_hash = hashlib.sha256(password.encode()).hexdigest()
+            password_hash = hash_password(password)
             cur.execute("INSERT INTO users (username, password_hash) VALUES (%s, %s) RETURNING id", 
                        (username, password_hash))
             user_id = cur.fetchone()[0]
-            session['user_id'] = user_id
             conn.commit()
-            return jsonify({"success": True, "message": "נרשמת בהצלחה"})
+            
+            token = generate_token(user_id)
+            return jsonify({
+                "success": True, 
+                "message": "נרשמת בהצלחה",
+                "token": token
+            })
     except Exception as e:
         if "duplicate key" in str(e):
             return jsonify({"error": "שם המשתמש כבר קיים"}), 409
@@ -351,16 +396,15 @@ def register():
         conn.close()
 
 @app.route('/logout', methods=['POST'])
-def logout():
-    session.clear()
+@token_required
+def logout(current_user_id):
+    # With JWT, logout is handled client-side by removing the token
     return jsonify({"success": True, "message": "התנתקת בהצלחה"})
 
 @app.route('/score', methods=['POST'])
-def score_password():
+@token_required
+def score_password(current_user_id):
     """Endpoint לבדיקה ושמירה ל-DB (פועל רק אם save_to_db=True)."""
-    if not is_logged_in():
-        return jsonify({"error": "נדרשת התחברות"}), 401
-        
     start_time = time.time()
     REQUEST_COUNT.labels(endpoint='score', method='POST').inc()
     
@@ -380,12 +424,11 @@ def score_password():
             conn = get_db_connection()
             if conn:
                 with conn.cursor() as cur:
-                    user_id = get_user_id()
                     password_hash = hashlib.sha256(password.encode()).hexdigest()
                     cur.execute("""
                         INSERT INTO password_scores (user_id, password_hash, plain_password, score)
                         VALUES (%s, %s, %s, %s);
-                    """, (user_id, password_hash, password, prediction))
+                    """, (current_user_id, password_hash, password, prediction))
                 conn.commit()
                 conn.close()
             
@@ -408,13 +451,11 @@ def score_password():
     
 # --- 4. New API Endpoint: Get History ---
 @app.route('/history', methods=['GET'])
-def get_password_history():
+@token_required
+def get_password_history(current_user_id):
     """
     Endpoint for retrieving all saved password scores from the database.
     """
-    if not is_logged_in():
-        return jsonify({"error": "נדרשת התחברות"}), 401
-        
     conn = get_db_connection()
     if not conn:
         return jsonify({"error": "Database connection failed."}), 500
@@ -422,14 +463,13 @@ def get_password_history():
     results = []
     try:
         with conn.cursor() as cur:
-            user_id = get_user_id()
             cur.execute("""
                 SELECT plain_password, score, prediction_time
                 FROM password_scores 
                 WHERE user_id = %s
                 ORDER BY prediction_time DESC
                 LIMIT 10;
-            """, (user_id,))
+            """, (current_user_id,))
             # ה-score (0, 1, 2) הופך לטקסט לצורך הצגה
             strength_map = {0: "חלשה", 1: "בינונית", 2: "חזקה"}
             
@@ -449,13 +489,123 @@ def get_password_history():
         return jsonify({"error": "Failed to retrieve history."}), 500
 
 
-@app.route('/metrics')
-def metrics():
-    """Prometheus metrics endpoint"""
-    return generate_latest(), 200, {'Content-Type': CONTENT_TYPE_LATEST}
+@app.route('/health', methods=['GET'])
+def health_check():
+    """Health check endpoint for load balancer"""
+    try:
+        # Check database connection
+        conn = get_db_connection()
+        if conn:
+            conn.close()
+            db_status = "healthy"
+        else:
+            db_status = "unhealthy"
+        
+        # Check ML model
+        model_status = "healthy" if MODEL else "unhealthy"
+        
+        status = "healthy" if db_status == "healthy" and model_status == "healthy" else "unhealthy"
+        
+        return jsonify({
+            "status": status,
+            "database": db_status,
+            "ml_model": model_status,
+            "timestamp": datetime.utcnow().isoformat()
+        }), 200 if status == "healthy" else 503
+    except Exception as e:
+        return jsonify({
+            "status": "unhealthy",
+            "error": str(e),
+            "timestamp": datetime.utcnow().isoformat()
+        }), 503
 
-@app.route('/recommend', methods=['GET'])
-def recommend_password():
+def create_password_poem(password):
+    """Create a safe poem for password memorization using only hints"""
+    if not GEMINI_API_KEY:
+        return "🎵 שיר הסיסמה שלי 🎵\nצריך מפתח Gemini API ליצירת שירים!"
+    
+    try:
+        # Extract safe hints only - NO actual password
+        hints = {
+            "length": len(password),
+            "has_numbers": "יש מספרים" if any(c.isdigit() for c in password) else "אין מספרים",
+            "has_symbols": "יש סימנים מיוחדים" if any(not c.isalnum() for c in password) else "אין סימנים",
+            "has_upper": "יש אותיות גדולות" if any(c.isupper() for c in password) else "אין אותיות גדולות",
+            "has_lower": "יש אותיות קטנות" if any(c.islower() for c in password) else "אין אותיות קטנות",
+            "starts_with": "מתחיל באות" if password[0].isalpha() else "מתחיל במספר" if password[0].isdigit() else "מתחיל בסימן",
+            "complexity": "פשוטה" if len(set(password)) < len(password)//2 else "מורכבת"
+        }
+        
+        prompt = f"""צור שיר קצר, חמוד וקליט בעברית לזכירת סיסמה עם המאפיינים הבאים:
+        - אורך: {hints['length']} תווים
+        - {hints['has_numbers']}
+        - {hints['has_symbols']}
+        - {hints['has_upper']}
+        - {hints['has_lower']}
+        - {hints['starts_with']}
+        - רמת מורכבות: {hints['complexity']}
+        
+        השיר צריך להיות:
+        - באורך 4-6 שורות
+        - עם חרוזים
+        - עם אמוג'י 🎵
+        - לעזור לזכור את המאפיינים בלי לחשוף את הסיסמה האמיתית
+        - מהנה וקליט
+        
+        התחל עם "🎵 שיר הסיסמה שלי 🎵"""
+        
+        # Use REST API directly
+        import requests
+        
+        url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={GEMINI_API_KEY}"
+        
+        payload = {
+            "contents": [{
+                "parts": [{
+                    "text": prompt
+                }]
+            }]
+        }
+        
+        response = requests.post(url, json=payload, timeout=30)
+        
+        if response.status_code == 200:
+            result = response.json()
+            if 'candidates' in result and len(result['candidates']) > 0:
+                poem_text = result['candidates'][0]['content']['parts'][0]['text']
+                return poem_text
+            else:
+                return "🎵 שיר הסיסמה שלי 🎵\nלא הצלחתי ליצור שיר היום,\nאבל הסיסמה שלך עדיין חזקה! 💪"
+        else:
+            return "🎵 שיר הסיסמה שלי 🎵\nשגיאה ביצירת השיר,\nאבל הסיסמה שלך מוגנת! 🛡️"
+        
+    except Exception as e:
+        return f"🎵 שיר הסיסמה שלי 🎵\nלא הצלחתי ליצור שיר היום,\nאבל הסיסמה שלך עדיין חזקה! 💪"
+
+
+@app.route('/password-poem', methods=['POST'])
+@token_required
+def generate_password_poem(current_user_id):
+    """Generate a safe poem for password memorization"""
+    data = request.get_json()
+    password = data.get('password', '')
+    
+    if not password:
+        return jsonify({"error": "נדרשת סיסמה ליצירת שיר"}), 400
+    
+    if len(password) < 4:
+        return jsonify({"error": "הסיסמה קצרה מדי ליצירת שיר"}), 400
+    
+    try:
+        poem = create_password_poem(password)
+        
+        return jsonify({
+            "poem": poem,
+            "message": "שיר נוצר בהצלחה! השיר לא חושף את הסיסמה שלך 🎵"
+        })
+        
+    except Exception as e:
+        return jsonify({"error": "שגיאה ביצירת השיר"}), 500
     """Endpoint המאמן מודל Markoc Chain על סיסמאות קודמות ומציע סיסמה חדשה."""
 
     # 1. שליפת סיסמאות חלשות שנשמרו מה-DB
@@ -465,12 +615,11 @@ def recommend_password():
 
     # שליפת כל הסיסמאות שנשמרו ללמידה
     with conn.cursor() as cur:
-        user_id = get_user_id()
         cur.execute("""
             SELECT plain_password FROM password_scores 
             WHERE user_id = %s
             ORDER BY prediction_time DESC LIMIT 50;
-        """, (user_id,))
+        """, (current_user_id,))
         password_list = [row[0] for row in cur.fetchall()]
     conn.close()
 
@@ -491,6 +640,11 @@ def recommend_password():
         print(f"Recommendation Error: {e}")
         return jsonify({"error": "Failed to generate recommendation."}), 500
 
+
+@app.route('/metrics')
+def metrics():
+    """Prometheus metrics endpoint"""
+    return generate_latest(), 200, {'Content-Type': CONTENT_TYPE_LATEST}
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 8000))

@@ -2,6 +2,9 @@
 .env
 .env.local
 .env.production
+.env.example
+
+# NEVER commit any environment files
 
 # Python
 __pycache__/
