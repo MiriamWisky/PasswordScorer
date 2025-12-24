@@ -606,6 +606,10 @@ def generate_password_poem(current_user_id):
         
     except Exception as e:
         return jsonify({"error": "שגיאה ביצירת השיר"}), 500
+
+@app.route('/recommend', methods=['GET'])
+@token_required
+def recommend_password(current_user_id):
     """Endpoint המאמן מודל Markoc Chain על סיסמאות קודמות ומציע סיסמה חדשה."""
 
     # 1. שליפת סיסמאות חלשות שנשמרו מה-DB

@@ -79,9 +79,9 @@ def test_password_history(mock_get_db, client, mock_db):
     mock_conn, mock_cursor = mock_db
     mock_get_db.return_value = mock_conn
     
-    # Simulate logged in user
-    with client.session_transaction() as sess:
-        sess['user_id'] = 1
+    # Generate JWT token for authentication
+    from app import generate_token
+    token = generate_token(1)
     
     # Mock history data
     from datetime import datetime
@@ -90,7 +90,7 @@ def test_password_history(mock_get_db, client, mock_db):
     ]
     
     # Get history
-    response = client.get('/history')
+    response = client.get('/history', headers={'Authorization': f'Bearer {token}'})
     assert response.status_code == 200
     data = json.loads(response.data)
     assert isinstance(data, list)
@@ -101,9 +101,9 @@ def test_password_recommendation(mock_get_db, client, mock_db):
     mock_conn, mock_cursor = mock_db
     mock_get_db.return_value = mock_conn
     
-    # Simulate logged in user
-    with client.session_transaction() as sess:
-        sess['user_id'] = 1
+    # Generate JWT token for authentication
+    from app import generate_token
+    token = generate_token(1)
     
     # Mock password history for recommendations
     mock_cursor.fetchall.return_value = [
@@ -111,7 +111,7 @@ def test_password_recommendation(mock_get_db, client, mock_db):
     ]
     
     # Get recommendation
-    response = client.get('/recommend')
+    response = client.get('/recommend', headers={'Authorization': f'Bearer {token}'})
     assert response.status_code == 200
     data = json.loads(response.data)
     assert 'password' in data
