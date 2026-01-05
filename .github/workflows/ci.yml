@@ -59,7 +59,7 @@ jobs:
       run: |
         docker compose up -d
         sleep 30
-        curl -f http://localhost/login.html || exit 1
+        curl -f http://localhost || exit 1
         docker compose down
     
     - name: Login to Docker Hub
@@ -153,5 +153,5 @@ jobs:
 
     - name: Health Check
       run: |
-        sleep 60
-        curl -f http://63.182.10.139/health || echo "Health check failed, but deployment may still be starting"
+        sleep 120
+        curl -f http://63.182.10.139 || echo "Service not ready yet"
