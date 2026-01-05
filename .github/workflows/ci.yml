@@ -97,8 +97,18 @@ jobs:
         DOCKERHUB_TOKEN: ${{ secrets.DOCKER_HUB_TOKEN }}
       run: |
         set -e
+        
+        # Debug: List files
+        echo "Files in current directory:"
+        ls -la
+        
+        # Check if deploy/docker-stack.yml exists
+        if [ ! -f "deploy/docker-stack.yml" ]; then
+          echo "deploy/docker-stack.yml not found!"
+          exit 1
+        fi
 
-        STACK_B64=$(base64 -w 0 docker-stack.yml)
+        STACK_B64=$(base64 -w 0 deploy/docker-stack.yml)
         NGINX_B64=$(base64 -w 0 nginx/nginx.conf)
         PROM_B64=$(base64 -w 0 monitoring/prometheus.yml)
         INDEX_B64=$(base64 -w 0 frontend/index.html)
