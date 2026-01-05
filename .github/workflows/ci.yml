@@ -127,6 +127,13 @@ jobs:
             \"sudo chown -R root:root /opt/password-scorer\",
             \"docker login -u $DOCKERHUB_USERNAME -p $DOCKERHUB_TOKEN\",
             \"docker pull $DOCKERHUB_USERNAME/password-scorer:latest\",
+            \"echo 'password_app_user' | docker secret create postgres_user - || true\",
+            \"echo 'MyStr0ng!DB_P@ssw0rd2024' | docker secret create postgres_password - || true\",
+            \"echo 'password_scorer_db' | docker secret create postgres_db - || true\",
+            \"echo 'your-secret-key-change-in-production' | docker secret create secret_key - || true\",
+            \"echo 'jwt-secret-key-change-in-production' | docker secret create jwt_secret - || true\",
+            \"echo '${{ secrets.GEMINI_API_KEY }}' | docker secret create gemini_api_key - || true\",
+            \"echo 'Grafana!Admin2024' | docker secret create gf_security_admin_password - || true\",
             \"DOCKER_HUB_USERNAME=$DOCKERHUB_USERNAME docker stack deploy -c /opt/password-scorer/docker-stack.yml passwordscorer\",
             \"docker service ls\"
           ]" \
