@@ -1,0 +1,106 @@
+version: "3.8"
+
+services:
+  db:
+    image: postgres:14-alpine
+    secrets:
+      - postgres_user
+      - postgres_password
+      - postgres_db
+    environment:
+      POSTGRES_USER_FILE: /run/secrets/postgres_user
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_DB_FILE: /run/secrets/postgres_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks: [backend-network]
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+  api:
+    image: ${DOCKER_HUB_USERNAME}/password-scorer:latest
+    secrets:
+      - postgres_user
+      - postgres_password
+      - postgres_db
+      - secret_key
+      - jwt_secret
+      - gemini_api_key
+    environment:
+      POSTGRES_USER_FILE: /run/secrets/postgres_user
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+      POSTGRES_DB_FILE: /run/secrets/postgres_db
+      SECRET_KEY_FILE: /run/secrets/secret_key
+      JWT_SECRET_FILE: /run/secrets/jwt_secret
+      GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
+      PGHOST: db
+    networks: [backend-network]
+    deploy:
+      replicas: 3
+      restart_policy:
+        condition: on-failure
+
+  nginx:
+    image: nginx:alpine
+    ports:
+      - "80:80"
+    volumes:
+      - /opt/password-scorer/nginx:/etc/nginx/conf.d:ro
+      - /opt/password-scorer/frontend:/usr/share/nginx/html:ro
+    networks: [backend-network]
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+  prometheus:
+    image: prom/prometheus:latest
+    ports:
+      - "9090:9090"
+    volumes:
+      - /opt/password-scorer/monitoring:/etc/prometheus:ro
+      - prometheus_data:/prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    networks: [backend-network]
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+  grafana:
+    image: grafana/grafana:latest
+    ports:
+      - "3000:3000"
+    secrets:
+      - gf_security_admin_password
+    environment:
+      GF_SECURITY_ADMIN_PASSWORD_FILE: /run/secrets/gf_security_admin_password
+    volumes:
+      - grafana_data:/var/lib/grafana
+    networks: [backend-network]
+    deploy:
+      replicas: 1
+      restart_policy:
+        condition: on-failure
+
+secrets:
+  postgres_user: { external: true }
+  postgres_password: { external: true }
+  postgres_db: { external: true }
+  secret_key: { external: true }
+  jwt_secret: { external: true }
+  gemini_api_key: { external: true }
+  gf_security_admin_password: { external: true }
+
+networks:
+  backend-network:
+    driver: overlay
+
+volumes:
+  postgres_data:
+  prometheus_data:
+  grafana_data:

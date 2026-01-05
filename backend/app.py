@@ -22,7 +22,16 @@ import google.generativeai as genai
 # --- 1. Initialization and Model Loading ---
 load_dotenv()
 app = Flask(__name__)
-app.secret_key = os.environ.get('SECRET_KEY', 'your-secret-key-change-in-production')
+
+def read_secret(var_name):
+    """Read secret from file or environment variable"""
+    secret_file = os.environ.get(f'{var_name}_FILE')
+    if secret_file and os.path.exists(secret_file):
+        with open(secret_file, 'r') as f:
+            return f.read().strip()
+    return os.environ.get(var_name, '')
+
+app.secret_key = read_secret('SECRET_KEY') or 'your-secret-key-change-in-production'
 
 # Rate limiting
 limiter = Limiter(
@@ -32,11 +41,11 @@ limiter = Limiter(
 )
 
 # JWT Configuration
-JWT_SECRET = os.environ.get('JWT_SECRET', 'jwt-secret-key-change-in-production')
+JWT_SECRET = read_secret('JWT_SECRET') or 'jwt-secret-key-change-in-production'
 JWT_EXPIRATION_HOURS = 24
 
 # Gemini AI Configuration
-GEMINI_API_KEY = os.environ.get('GEMINI_API_KEY', '')
+GEMINI_API_KEY = read_secret('GEMINI_API_KEY')
 if GEMINI_API_KEY:
     genai.configure(api_key=GEMINI_API_KEY)
 
@@ -104,9 +113,9 @@ def get_db_connection():
         else:
             conn = psycopg2.connect(
                 host=os.environ.get("PGHOST", "db"),
-                database=os.environ.get("POSTGRES_DB", "password_db"),
-                user=os.environ.get("POSTGRES_USER", "devops_user"),
-                password=os.environ.get("POSTGRES_PASSWORD", "supersecretpassword")
+                database=read_secret("POSTGRES_DB") or "password_db",
+                user=read_secret("POSTGRES_USER") or "devops_user",
+                password=read_secret("POSTGRES_PASSWORD") or "supersecretpassword"
             )
         return conn
     except Exception as e:
