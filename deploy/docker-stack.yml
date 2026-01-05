@@ -11,6 +11,9 @@ services:
       POSTGRES_USER_FILE: /run/secrets/postgres_user
       POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
       POSTGRES_DB_FILE: /run/secrets/postgres_db
+      PGHOST: db
+      PGUSER: password_app_user
+      PGDATABASE: password_scorer_db
     volumes:
       - postgres_data:/var/lib/postgresql/data
     networks: [backend-network]
@@ -36,6 +39,8 @@ services:
       JWT_SECRET_FILE: /run/secrets/jwt_secret
       GEMINI_API_KEY_FILE: /run/secrets/gemini_api_key
       PGHOST: db
+      PGUSER: password_app_user
+      PGDATABASE: password_scorer_db
     networks: [backend-network]
     deploy:
       replicas: 3
